@@ -6,6 +6,7 @@ from ultralytics import YOLO
 import zipfile
 import os
 import tempfile
+import easyocr
 
 # --- DASHBOARD CONFIG ---
 st.set_page_config(page_title="Cow Ear-Tag AI", layout="wide", initial_sidebar_state="expanded")
@@ -18,14 +19,21 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# --- CACHE MODELS TO PREVENT RELOADING ---
+@st.cache_resource
+def load_yolo_model(model_path):
+    return YOLO(model_path)
+
+@st.cache_resource
+def load_ocr_model():
+    # gpu=False is recommended for free cloud tiers unless you have guaranteed GPU access
+    return easyocr.Reader(['en'], gpu=False) 
+
 # --- SIDEBAR ---
 st.sidebar.header("🚀 AI Control Panel")
-# Using your exact model filename from the repo
 model_file = "cow_eartag_yolov8n_100ep_clean_best.pt"
 conf_level = st.sidebar.slider("Detection Confidence", 0.1, 1.0, 0.4)
-
 st.sidebar.divider()
-st.sidebar.info("**Beginner Project Value:** This app demonstrates the full 'Edge-to-Cloud' pipeline: capturing barn data, processing with YOLOv8, and serving it via a web dashboard.")
 
 # --- MAIN INTERFACE ---
 st.title("🐄 Livestock ID Dashboard")
@@ -34,11 +42,12 @@ st.subheader("Automated Ear-Tag Recognition System")
 uploaded_zip = st.file_uploader("📂 Upload ZIP file of Cow Images", type=["zip"])
 
 if uploaded_zip:
-    # Load the model
+    # Load the models
     try:
-        model = YOLO(model_file)
+        model = load_yolo_model(model_file)
+        ocr_reader = load_ocr_model()
     except Exception as e:
-        st.error(f"Could not find `{model_file}`. Make sure it is in your GitHub root folder.")
+        st.error(f"Error loading models. Ensure `{model_file}` is in your repo. Details: {e}")
         st.stop()
 
     # Create temporary directory to unzip files
@@ -53,7 +62,7 @@ if uploaded_zip:
         # Dashboard Overview Metrics
         m1, m2, m3 = st.columns(3)
         m1.metric("Total Images", len(image_paths))
-        m2.metric("Model Version", "YOLOv8n (100 Epochs)")
+        m2.metric("Pipeline", "YOLOv8 + EasyOCR")
         m3.metric("Status", "Processing...")
 
         st.divider()
@@ -61,13 +70,18 @@ if uploaded_zip:
         # Process and Show Results in a Grid
         for path in image_paths:
             img_name = os.path.basename(path)
+            
+            # Load original image using OpenCV for cropping
+            orig_img = cv2.imread(path)
+            
+            # YOLO Inference
             results = model(path, conf=conf_level)
             
             # Create a box for each image result
             with st.expander(f"Analysis for {img_name}", expanded=True):
                 col_img, col_data = st.columns([2, 1])
                 
-                # Inference result
+                # Plot YOLO bounding boxes
                 res_plotted = results[0].plot()
                 res_rgb = cv2.cvtColor(res_plotted, cv2.COLOR_BGR2RGB)
                 
@@ -78,12 +92,33 @@ if uploaded_zip:
                     st.write("### 🏷️ Detected EARTAG Str")
                     if len(results[0].boxes) > 0:
                         for i, box in enumerate(results[0].boxes):
-                            # Placeholder logic for the string ID (normally OCR would go here)
-                            # In a production app, you'd crop the tag and pass to EasyOCR
                             confidence = box.conf[0]
                             st.success(f"**Tag {i+1} Found!**")
-                            st.code(f"STR: [SCANNING_ID...]", language="text") 
-                            st.progress(float(confidence), text=f"Confidence: {confidence:.2%}")
+                            
+                            # --- EASYOCR LOGIC ---
+                            # 1. Get exact pixel coordinates of the bounding box
+                            x1, y1, x2, y2 = map(int, box.xyxy[0])
+                            
+                            # 2. Crop the ear tag from the original image
+                            tag_crop = orig_img[y1:y2, x1:x2]
+                            
+                            # 3. Read the text from the cropped image
+                            # detail=0 returns just the string instead of bounding boxes and confidences
+                            ocr_result = ocr_reader.readtext(tag_crop, detail=0) 
+                            
+                            # 4. Clean up the output
+                            if ocr_result:
+                                extracted_text = " ".join(ocr_result)
+                            else:
+                                extracted_text = "UNREADABLE (Blur/Angle)"
+                            
+                            st.code(f"STR: {extracted_text}", language="text") 
+                            st.progress(float(confidence), text=f"Detection Confidence: {confidence:.2%}")
+                            
+                            # Show the cropped tag to the user
+                            # We convert BGR to RGB so Streamlit displays the colors correctly
+                            st.image(cv2.cvtColor(tag_crop, cv2.COLOR_BGR2RGB), caption=f"Cropped Tag {i+1}", width=120)
+                            st.divider()
                     else:
                         st.warning("No tags detected in this view.")
 
