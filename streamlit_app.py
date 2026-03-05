@@ -30,7 +30,7 @@ def load_ocr_model():
     return easyocr.Reader(['en'], gpu=False) 
 
 # --- MAIN APP HEADER ---
-st.title("🚜 Smart Farm: Ear-Tag Detection")
+st.title(" 🐄 Cattle Ear-Tag Detection")
 st.markdown("Automated identification system for livestock monitoring.")
 
 # --- INTEGRATED CONTROLS (Replacing Sidebar) ---
