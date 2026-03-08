@@ -8,7 +8,7 @@ import tempfile
 import easyocr
 
 # --- DASHBOARD CONFIG ---
-st.set_page_config(page_title="Cow Ear-Tag AI", layout="wide")
+st.set_page_config(page_title="Cow Ear-Tag Detector System", layout="wide")
 
 # Custom CSS for a clean, integrated look
 st.markdown("""
@@ -36,10 +36,6 @@ def load_image_pil(image_path):
 def pil_to_array(pil_img):
     """Convert PIL image to numpy array"""
     return np.array(pil_img)
-
-def array_to_pil(arr):
-    """Convert numpy array back to PIL image"""
-    return Image.fromarray(np.uint8(arr))
 
 # --- HELPER FUNCTION: Draw bboxes on PIL image ---
 def draw_boxes_on_image(pil_image, results, conf_threshold):
