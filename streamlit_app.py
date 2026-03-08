@@ -29,8 +29,26 @@ def load_yolo_model(model_path):
 def load_ocr_model():
     return easyocr.Reader(['en'], gpu=False) 
 
+# --- HELPER FUNCTION: Draw bboxes without OpenGL ---
+def draw_boxes_pil(image_array, results, conf_threshold):
+    """Draw YOLO boxes using PIL instead of cv2 (no OpenGL needed)"""
+    pil_image = Image.fromarray(image_array)
+    from PIL import ImageDraw
+    draw = ImageDraw.Draw(pil_image)
+    
+    for box in results[0].boxes:
+        if box.conf[0] >= conf_threshold:
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            # Draw rectangle (green color)
+            draw.rectangle([x1, y1, x2, y2], outline='lime', width=3)
+            # Draw confidence label
+            conf_text = f"{float(box.conf[0]):.2f}"
+            draw.text((x1, y1-10), conf_text, fill='lime')
+    
+    return np.array(pil_image)
+
 # --- MAIN APP HEADER ---
-st.title(" 🐄 Cattle Ear-Tag Detection")
+st.title("🐄 Cattle Ear-Tag Detection")
 st.markdown("Automated identification system for livestock monitoring.")
 
 # --- INTEGRATED CONTROLS (Replacing Sidebar) ---
@@ -83,12 +101,12 @@ if uploaded_zip:
             with st.expander(f"🔍 Analysis: {img_name}", expanded=True):
                 col_img, col_data = st.columns([2, 1])
                 
-                # Plot YOLO result on the image
-                res_plotted = results[0].plot()
-                res_rgb = cv2.cvtColor(res_plotted, cv2.COLOR_BGR2RGB)
+                # Draw boxes using PIL (no OpenGL required)
+                orig_rgb = cv2.cvtColor(orig_img, cv2.COLOR_BGR2RGB)
+                res_plotted = draw_boxes_pil(orig_rgb, results, conf_level)
                 
                 with col_img:
-                    st.image(res_rgb, caption="Full Frame Detection", use_container_width=True)
+                    st.image(res_plotted, caption="Full Frame Detection", use_container_width=True)
                 
                 with col_data:
                     st.markdown("### 🏷️ EARTAG Str Results")
