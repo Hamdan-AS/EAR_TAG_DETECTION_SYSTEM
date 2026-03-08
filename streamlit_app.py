@@ -1,7 +1,6 @@
 import streamlit as st
-import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 from ultralytics import YOLO
 import zipfile
 import os
@@ -29,29 +28,40 @@ def load_yolo_model(model_path):
 def load_ocr_model():
     return easyocr.Reader(['en'], gpu=False) 
 
-# --- HELPER FUNCTION: Draw bboxes without OpenGL ---
-def draw_boxes_pil(image_array, results, conf_threshold):
-    """Draw YOLO boxes using PIL instead of cv2 (no OpenGL needed)"""
-    pil_image = Image.fromarray(image_array)
-    from PIL import ImageDraw
+# --- HELPER: Load image without cv2 ---
+def load_image_pil(image_path):
+    """Load image using PIL only (no cv2 needed)"""
+    return Image.open(image_path).convert('RGB')
+
+def pil_to_array(pil_img):
+    """Convert PIL image to numpy array"""
+    return np.array(pil_img)
+
+def array_to_pil(arr):
+    """Convert numpy array back to PIL image"""
+    return Image.fromarray(np.uint8(arr))
+
+# --- HELPER FUNCTION: Draw bboxes on PIL image ---
+def draw_boxes_on_image(pil_image, results, conf_threshold):
+    """Draw YOLO boxes using PIL (no cv2 or OpenGL needed)"""
     draw = ImageDraw.Draw(pil_image)
     
     for box in results[0].boxes:
-        if box.conf[0] >= conf_threshold:
+        if float(box.conf[0]) >= conf_threshold:
             x1, y1, x2, y2 = map(int, box.xyxy[0])
-            # Draw rectangle (green color)
-            draw.rectangle([x1, y1, x2, y2], outline='lime', width=3)
+            # Draw rectangle (bright green/lime)
+            draw.rectangle([x1, y1, x2, y2], outline=(0, 255, 0), width=3)
             # Draw confidence label
             conf_text = f"{float(box.conf[0]):.2f}"
-            draw.text((x1, y1-10), conf_text, fill='lime')
+            draw.text((x1, max(0, y1-15)), conf_text, fill=(0, 255, 0))
     
-    return np.array(pil_image)
+    return pil_image
 
 # --- MAIN APP HEADER ---
 st.title("🐄 Cattle Ear-Tag Detection")
 st.markdown("Automated identification system for livestock monitoring.")
 
-# --- INTEGRATED CONTROLS (Replacing Sidebar) ---
+# --- INTEGRATED CONTROLS ---
 with st.container():
     c1, c2 = st.columns([2, 1])
     with c1:
@@ -95,43 +105,51 @@ if uploaded_zip:
         # --- PROCESSING LOOP ---
         for path in image_paths:
             img_name = os.path.basename(path)
-            orig_img = cv2.imread(path)
+            
+            # Load image using PIL only
+            orig_pil = load_image_pil(path)
+            
+            # Run YOLO detection
             results = model(path, conf=conf_level)
             
             with st.expander(f"🔍 Analysis: {img_name}", expanded=True):
                 col_img, col_data = st.columns([2, 1])
                 
-                # Draw boxes using PIL (no OpenGL required)
-                orig_rgb = cv2.cvtColor(orig_img, cv2.COLOR_BGR2RGB)
-                res_plotted = draw_boxes_pil(orig_rgb, results, conf_level)
+                # Draw boxes on image using PIL
+                display_pil = orig_pil.copy()
+                display_pil = draw_boxes_on_image(display_pil, results, conf_level)
                 
                 with col_img:
-                    st.image(res_plotted, caption="Full Frame Detection", use_container_width=True)
+                    st.image(display_pil, caption="Full Frame Detection", use_container_width=True)
                 
                 with col_data:
-                    st.markdown("### 🏷️ EARTAG Str Results")
+                    st.markdown("### 🏷️ EARTAG Results")
                     
                     if len(results[0].boxes) > 0:
                         for i, box in enumerate(results[0].boxes):
-                            confidence = box.conf[0]
+                            confidence = float(box.conf[0])
                             
                             # 1. Get Coordinates & Crop
                             x1, y1, x2, y2 = map(int, box.xyxy[0])
-                            tag_crop = orig_img[y1:y2, x1:x2]
-                            tag_rgb = cv2.cvtColor(tag_crop, cv2.COLOR_BGR2RGB)
+                            
+                            # Crop using PIL
+                            tag_crop_pil = orig_pil.crop((x1, y1, x2, y2))
+                            
+                            # Convert to array for OCR (easyocr accepts numpy arrays)
+                            tag_crop_array = pil_to_array(tag_crop_pil)
                             
                             # 2. OCR Extraction
-                            ocr_result = ocr_reader.readtext(tag_crop, detail=0)
+                            ocr_result = ocr_reader.readtext(tag_crop_array, detail=0)
                             extracted_text = " ".join(ocr_result) if ocr_result else "TEXT UNREADABLE"
                             
                             # 3. Visual UI for results
                             st.info(f"**Tag {i+1} Found**")
                             
-                            # SHOW THE CROP CLEARLY - This ensures the user sees the tag even if OCR fails
-                            st.image(tag_rgb, caption=f"Cropped Tag {i+1} View", width=200)
+                            # Show the cropped tag
+                            st.image(tag_crop_pil, caption=f"Cropped Tag {i+1} View", width=200)
                             
                             st.markdown(f"**Extracted ID:** `{extracted_text}`")
-                            st.progress(float(confidence), text=f"Match Confidence: {confidence:.2%}")
+                            st.progress(min(confidence, 1.0), text=f"Match Confidence: {confidence:.2%}")
                             st.divider()
                     else:
                         st.warning("No tags detected. Try lowering the Confidence Threshold above.")
